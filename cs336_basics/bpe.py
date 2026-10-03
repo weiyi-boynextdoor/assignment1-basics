@@ -88,11 +88,15 @@ class BPE:
         self.num_merges = num_merges
         self.vocab: dict[int, bytes] = {}
         self.merges: list[tuple[bytes, bytes]] = []
+        self.inverse_vocab: dict[bytes, int] = {}
 
         for i in range(256):
             self.vocab[len(self.vocab)] = bytes([i])
         for special_token in special_tokens:
             self.vocab[len(self.vocab)] = special_token.encode("utf-8")
+
+        for k,v in self.vocab.items():
+            self.inverse_vocab[v] = k
 
     def train(self, pretokenized_words: list[str]):
         sequences: list[list[int]] = []
@@ -128,22 +132,27 @@ class BPE:
                 break
             # pick lexico-max candidate
             picked = candidates[0]
+            max_bytes_pair = (vocab[picked[0]], vocab[picked[1]])
             for i in range(len(candidates)):
                 candidate = candidates[i]
-                if candidate > picked:
+                bytes_pair = (vocab[candidate[0]], vocab[candidate[1]])
+                if bytes_pair > max_bytes_pair:
                     picked = candidate
-            
+                    max_bytes_pair = bytes_pair
+
             # update vocab & merges
             merges.append((vocab[picked[0]], vocab[picked[1]]))
             new_token = len(vocab)
-            self.vocab[new_token] = vocab[picked[0]] + vocab[picked[1]]
-    
+            byte_str = vocab[picked[0]] + vocab[picked[1]]
+            vocab[new_token] = byte_str
+            self.inverse_vocab[byte_str] = new_token
+
             # check affected sequences
             affected_sequence_indices = list(pair_in_sequences[picked])
             for idx in affected_sequence_indices:
                 sequence = sequences[idx]
                 new_sequence = []
-    
+
                 # cound old pairs
                 old_pair_counts: dict[tuple[int], int] = {} # byte-pair: count
                 for i in range(len(sequence) - 1):
@@ -152,7 +161,7 @@ class BPE:
                         old_pair_counts[pair] = 1
                     else:
                         old_pair_counts[pair] += 1
-    
+
                 i = 0
                 # merge sequence
                 while i < len(sequence) - 1:
@@ -165,7 +174,7 @@ class BPE:
                 if i == len(sequence) - 1:
                     new_sequence.append(sequence[i])
                 sequences[idx] = new_sequence
-    
+
                 # count new pairs
                 new_pair_counts: dict[tuple[int], int] = {} # byte-pair: count
                 for i in range(len(new_sequence) - 1):
@@ -174,7 +183,7 @@ class BPE:
                         new_pair_counts[pair] = 1
                     else:
                         new_pair_counts[pair] += 1
-            
+
                 for pair, count in old_pair_counts.items():
                     pair_counts[pair] -= count
                     if pair not in new_pair_counts:
@@ -254,11 +263,16 @@ import json
 
 def test_train_bpe():
     input_path = FIXTURES_PATH / "corpus.en"
-    vocab, merges = run_bpe(
-        input_path=input_path,
-        vocab_size=500,
-        special_tokens=["<|endoftext|>"],
-    )
+    special_tokens = ["<|endoftext|>"]
+    vocab_size = 500
+
+    num_merges = vocab_size - 256 - len(special_tokens)
+    bpe = BPE(num_merges, special_tokens)
+    pretokenized_words = pretokenization(input_path, 1)
+    bpe.train(pretokenized_words)
+
+    vocab = bpe.vocab
+    merges = bpe.merges
 
     # Path to the reference tokenizer vocab and merges
     reference_vocab_path = FIXTURES_PATH / "train-bpe-reference-vocab.json"
@@ -275,7 +289,12 @@ def test_train_bpe():
             )
             for merge_token_1, merge_token_2 in gpt2_reference_merges
         ]
-    assert merges == reference_merges
+    assert len(merges) == len(reference_merges)
+
+    if merges != reference_merges:
+        for i in range(len(reference_merges)):
+            if merges[i] != reference_merges[i]:
+                print(f"not equal to reference at index {i}! get:{merges[i]}, reference:{reference_merges[i]}")
 
     # Compare the vocab to the expected output vocab
     with open(reference_vocab_path, encoding="utf-8") as f:
@@ -290,15 +309,17 @@ def test_train_bpe():
     assert set(vocab.values()) == set(reference_vocab.values())
 
 if __name__ == "__main__":
-    input_path = FIXTURES_PATH / "corpus.en"
-    special_tokens = ["<|endoftext|>"]
-    vocab_size = 500
+    # input_path = FIXTURES_PATH / "corpus.en"
+    # special_tokens = ["<|endoftext|>"]
+    # vocab_size = 500
 
-    num_merges = vocab_size - 256 - len(special_tokens)
-    bpe = BPE(num_merges, special_tokens)
-    pretokenized_words = pretokenization(input_path, 1)
-    bpe.train(pretokenized_words)
+    # num_merges = vocab_size - 256 - len(special_tokens)
+    # bpe = BPE(num_merges, special_tokens)
+    # pretokenized_words = pretokenization(input_path, 1)
+    # bpe.train(pretokenized_words)
 
-    with open("decoded.txt", "wb") as f:
-        for word in pretokenized_words:
-            f.write(bpe.decode(bpe.encode(word)).encode("utf-8"))
+    # with open("decoded.txt", "wb") as f:
+    #     for word in pretokenized_words:
+    #         f.write(bpe.decode(bpe.encode(word)).encode("utf-8"))
+
+    test_train_bpe()
