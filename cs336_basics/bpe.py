@@ -83,7 +83,135 @@ def pretokenization(input_path: str | os.PathLike, num_processes = 1, split_spec
 def sort_by_value(d):
     return sorted(d.items(), key=lambda p: p[1], reverse=True)
 
-def bpe(input_path: str | os.PathLike,
+class BPE:
+    def __init__(self, num_merges, special_tokens: list[str]):
+        self.num_merges = num_merges
+        self.vocab: dict[int, bytes] = {}
+        self.merges: list[tuple[bytes, bytes]] = []
+
+        for i in range(256):
+            self.vocab[len(self.vocab)] = bytes([i])
+        for special_token in special_tokens:
+            self.vocab[len(self.vocab)] = special_token.encode("utf-8")
+
+    def train(self, pretokenized_words: list[str]):
+        sequences: list[list[int]] = []
+        for word in pretokenized_words:
+            encoded = word.encode("utf-8")
+            sequences.append([encoded[i] for i in range(len(encoded))])
+
+        pair_counts: dict[tuple[int], int] = {} # byte-pair: count
+        pair_in_sequences: dict[tuple[int], set[int]] = {} # byte-pair: set(index), to speed-up updated
+        for idx, sequence in enumerate(sequences):
+            for i in range(len(sequence) - 1):
+                pair = (sequence[i], sequence[i+1])
+                if pair not in pair_counts:
+                    pair_counts[pair] = 1
+                    pair_in_sequences[pair] = set([idx])
+                else:
+                    pair_counts[pair] += 1
+                    pair_in_sequences[pair].add(idx)
+
+        merges = self.merges
+        vocab = self.vocab
+        for round in range(self.num_merges):
+            # merge candidate which counts most, when equal
+            candidates = []
+            max_count = 0
+            for pair, count in pair_counts.items():
+                if count > max_count:
+                    candidates = [pair]
+                    max_count = count
+                elif count == max_count:
+                    candidates.append(pair)
+            if not candidates:
+                break
+            # pick lexico-max candidate
+            picked = candidates[0]
+            for i in range(len(candidates)):
+                candidate = candidates[i]
+                if candidate > picked:
+                    picked = candidate
+            
+            # update vocab & merges
+            merges.append((vocab[picked[0]], vocab[picked[1]]))
+            new_token = len(vocab)
+            self.vocab[new_token] = vocab[picked[0]] + vocab[picked[1]]
+    
+            # check affected sequences
+            affected_sequence_indices = list(pair_in_sequences[picked])
+            for idx in affected_sequence_indices:
+                sequence = sequences[idx]
+                new_sequence = []
+    
+                # cound old pairs
+                old_pair_counts: dict[tuple[int], int] = {} # byte-pair: count
+                for i in range(len(sequence) - 1):
+                    pair = (sequence[i], sequence[i + 1])
+                    if pair not in old_pair_counts:
+                        old_pair_counts[pair] = 1
+                    else:
+                        old_pair_counts[pair] += 1
+    
+                i = 0
+                # merge sequence
+                while i < len(sequence) - 1:
+                    if (sequence[i], sequence[i + 1]) == picked:
+                        new_sequence.append(new_token)
+                        i += 2
+                    else:
+                        new_sequence.append(sequence[i])
+                        i += 1
+                if i == len(sequence) - 1:
+                    new_sequence.append(sequence[i])
+                sequences[idx] = new_sequence
+    
+                # count new pairs
+                new_pair_counts: dict[tuple[int], int] = {} # byte-pair: count
+                for i in range(len(new_sequence) - 1):
+                    pair = (new_sequence[i], new_sequence[i + 1])
+                    if pair not in new_pair_counts:
+                        new_pair_counts[pair] = 1
+                    else:
+                        new_pair_counts[pair] += 1
+            
+                for pair, count in old_pair_counts.items():
+                    pair_counts[pair] -= count
+                    if pair not in new_pair_counts:
+                        pair_in_sequences[pair].remove(idx)
+                for pair, count in new_pair_counts.items():
+                    if pair not in pair_counts:
+                        pair_counts[pair] = count
+                        pair_in_sequences[pair] = set([idx])
+                    else:
+                        pair_counts[pair] += count
+                        pair_in_sequences[pair].add(idx)
+
+    def encode(self, text: str) -> list[int]:
+        byte_str = text.encode("utf-8")
+        tokens = list(byte_str)
+
+        # must keep merge order
+        for pair in self.merges:
+            new_tokens = []
+            i = 0
+            while i < len(tokens):
+                if i < len(tokens) - 1 and tokens[i] == pair[0] and tokens[i + 1] == pair[1]:
+                    new_tokens.append(tokens[i] + tokens[i + 1])
+                    i += 2
+                else:
+                    new_tokens.append(tokens[i])
+                    i += 1
+            tokens = new_tokens
+
+        return tokens
+
+    def decode(self, tokens: list[str]) -> str:
+        byte_str = b''.join([self.vocab[token] for token in tokens])
+        return byte_str.decode("utf-8")
+
+
+def run_bpe(input_path: str | os.PathLike,
     vocab_size: int,
     special_tokens: list[str]
     ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
@@ -113,108 +241,12 @@ def bpe(input_path: str | os.PathLike,
     """
     pretokenized_words = pretokenization(input_path, 1)
 
-    # initialize vocab with 256 ASCII characters
-    vocab = {i: bytes([i]) for i in range(256)}
-    for special_token in special_tokens:
-        vocab[len(vocab)] = special_token
-    merges = []
+    num_merges = vocab_size - 256 - len(special_tokens)
+    bpe = BPE(num_merges, special_tokens)
 
-    # split words into vocab sequences
-    sequences : list[list[int]] = []
-    for word in pretokenized_words:
-        encoded = word.encode("utf-8")
-        sequences.append([encoded[i] for i in range(len(encoded))])
+    bpe.train(pretokenized_words)
 
-    pair_counts : dict[tuple[int], int] = {} # byte-pair: count
-    pair_in_sequences : dict[tuple[int], set[int]] = {} # byte-pair: set(index)
-    for idx, sequence in enumerate(sequences):
-        for i in range(len(sequence) - 1):
-            pair = (sequence[i], sequence[i+1])
-            if pair not in pair_counts:
-                pair_counts[pair] = 1
-                pair_in_sequences[pair] = set([idx])
-            else:
-                pair_counts[pair] += 1
-                pair_in_sequences[pair].add(idx)
-
-    max_rounds = vocab_size - len(vocab)
-    for round in range(max_rounds):
-        # merge candidate which counts most, when equal
-        candidates = []
-        max_count = 0
-        for pair, count in pair_counts.items():
-            if count > max_count:
-                candidates = [pair]
-                max_count = count
-            elif count == max_count:
-                candidates.append(pair)
-        if not candidates:
-            break
-        # pick candidate with largest algebra
-        picked = candidates[0]
-        max_merged_bytes = b""
-        for i in range(len(candidates)):
-            merged_bytes = vocab[picked[0]] + vocab[picked[1]]
-            if merged_bytes > max_merged_bytes:
-                max_merged_bytes = merged_bytes
-                picked = candidates[i]
-        
-        # update vocab & merges
-        merges.append((vocab[picked[0]], vocab[picked[1]]))
-        new_token = len(vocab)
-        vocab[new_token] = max_merged_bytes
-
-        # check affected sequences
-        affected_sequence_indices = list(pair_in_sequences[picked])
-        for idx in affected_sequence_indices:
-            sequence = sequences[idx]
-            new_sequence = []
-
-            # cound old pairs
-            old_pair_counts : dict[tuple[int], int] = {} # byte-pair: count
-            for i in range(len(sequence) - 1):
-                pair = (sequence[i], sequence[i + 1])
-                if pair not in old_pair_counts:
-                    old_pair_counts[pair] = 1
-                else:
-                    old_pair_counts[pair] += 1
-
-            i = 0
-            # merge sequence
-            while i < len(sequence) - 1:
-                if (sequence[i], sequence[i + 1]) == picked:
-                    new_sequence.append(new_token)
-                    i += 2
-                else:
-                    new_sequence.append(sequence[i])
-                    i += 1
-            if i == len(sequence) - 1:
-                new_sequence.append(sequence[i])
-            sequences[idx] = new_sequence
-
-            # count new pairs
-            new_pair_counts : dict[tuple[int], int] = {} # byte-pair: count
-            for i in range(len(new_sequence) - 1):
-                pair = (new_sequence[i], new_sequence[i + 1])
-                if pair not in new_pair_counts:
-                    new_pair_counts[pair] = 1
-                else:
-                    new_pair_counts[pair] += 1
-
-            for pair, count in old_pair_counts.items():
-                pair_counts[pair] -= count
-                if pair not in new_pair_counts:
-                    pair_in_sequences[pair].remove(idx)
-            for pair, count in new_pair_counts.items():
-                if pair not in pair_counts:
-                    pair_counts[pair] = count
-                    pair_in_sequences[pair] = set([idx])
-                else:
-                    pair_counts[pair] += count
-                    pair_in_sequences[pair].add(idx)
-        pass
-
-    return vocab, merges
+    return bpe.vocab, bpe.merges
 
 FIXTURES_PATH = "./tests/fixtures"
 from tests.common import FIXTURES_PATH, gpt2_bytes_to_unicode
@@ -222,7 +254,7 @@ import json
 
 def test_train_bpe():
     input_path = FIXTURES_PATH / "corpus.en"
-    vocab, merges = bpe(
+    vocab, merges = run_bpe(
         input_path=input_path,
         vocab_size=500,
         special_tokens=["<|endoftext|>"],
@@ -259,7 +291,7 @@ def test_train_bpe():
 
 if __name__ == "__main__":
     start_time = time.time()
-    vocab, merges = bpe("./tests/fixtures/corpus.en", 500, ["<|endoftext|>"])
+    vocab, merges = run_bpe("./tests/fixtures/corpus.en", 500, ["<|endoftext|>"])
     end_time = time.time()
     print(f"cost {end_time - start_time} seconds")
     # print(vocab)
