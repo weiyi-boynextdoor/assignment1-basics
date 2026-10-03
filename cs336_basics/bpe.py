@@ -290,10 +290,15 @@ def test_train_bpe():
     assert set(vocab.values()) == set(reference_vocab.values())
 
 if __name__ == "__main__":
-    start_time = time.time()
-    vocab, merges = run_bpe("./tests/fixtures/corpus.en", 500, ["<|endoftext|>"])
-    end_time = time.time()
-    print(f"cost {end_time - start_time} seconds")
-    # print(vocab)
-    print(merges)
-    # test_train_bpe()
+    input_path = FIXTURES_PATH / "corpus.en"
+    special_tokens = ["<|endoftext|>"]
+    vocab_size = 500
+
+    num_merges = vocab_size - 256 - len(special_tokens)
+    bpe = BPE(num_merges, special_tokens)
+    pretokenized_words = pretokenization(input_path, 1)
+    bpe.train(pretokenized_words)
+
+    with open("decoded.txt", "wb") as f:
+        for word in pretokenized_words:
+            f.write(bpe.decode(bpe.encode(word)).encode("utf-8"))
