@@ -38,6 +38,24 @@ class RMSNorm(nn.Module):
         return result.to(in_type)
 
 
+class SwiGLU(nn.Module):
+    def __init__(self, d_model:int, d_ff:int, device=None, dtype=None):
+        super().__init__()
+        self.d_model = d_model
+        if d_ff <= 0:
+            d_ff = d_model * 8 / 3
+        self.d_ff = d_ff
+        self.w1 = nn.Parameter(torch.randn(d_ff, d_model, device=device, dtype=dtype))
+        self.w2 = nn.Parameter(torch.randn(d_model, d_ff, device=device, dtype=dtype))
+        self.w3 = nn.Parameter(torch.randn(d_ff, d_model, device=device, dtype=dtype))
+
+    def forward(self, x:torch.Tensor):
+        w1_x = x @ self.w1.T
+        silu = w1_x * torch.sigmoid(w1_x)
+        w3_x = x @ self.w3.T
+        return (silu * w3_x) @ self.w2.T
+
+
 if __name__ == "__main__":
     IN_FEATURES = 10
     OUT_FEATURES = 5
