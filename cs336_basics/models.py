@@ -56,12 +56,20 @@ class SwiGLU(nn.Module):
         return (silu * w3_x) @ self.w2.T
 
 
+class RoPE(nn.Module):
+    def __init__(self, theta:float, d_k:int, max_seq_len:int, device=None):
+        super().__init__()
+        half_d_k = d_k / 2
+        exponent = torch.arange(half_d_k, dtype=torch.float)
+        exponent /= half_d_k
+        inv_freq = torch.pow(1.0 / theta, exponent)
+        thetas = torch.outer(torch.arange(max_seq_len, dtype=torch.float), inv_freq) # shape: max_seq_len, d_k / 2
+        self.register_buffer("cos_theta", thetas.cos(), persistent=False)
+        self.register_buffer("sin_theta", thetas.sin(), persistent=False)
+
+    def forward(x:torch.Tensor, token_positions:torch.Tensor):
+        pass
+
+
 if __name__ == "__main__":
-    IN_FEATURES = 10
-    OUT_FEATURES = 5
-    x = torch.arange(IN_FEATURES, dtype=torch.float)
-    linear = Linear(IN_FEATURES, OUT_FEATURES, dtype=torch.float)
-    for param in linear.named_parameters():
-        print(param)
-    y = linear(x)
-    print(y)
+    rope = RoPE(10000.0, 100, 200)
