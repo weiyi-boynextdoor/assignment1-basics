@@ -64,11 +64,18 @@ class RoPE(nn.Module):
         exponent /= half_d_k
         inv_freq = torch.pow(1.0 / theta, exponent)
         thetas = torch.outer(torch.arange(max_seq_len, dtype=torch.float), inv_freq) # shape: max_seq_len, d_k / 2
-        self.register_buffer("cos_theta", thetas.cos(), persistent=False)
-        self.register_buffer("sin_theta", thetas.sin(), persistent=False)
+        self.register_buffer("cos_thetas", thetas.cos(), persistent=False)
+        self.register_buffer("sin_thetas", thetas.sin(), persistent=False)
 
-    def forward(x:torch.Tensor, token_positions:torch.Tensor):
-        pass
+    def forward(self, x:torch.Tensor, token_positions:torch.Tensor):
+        cos_thetas = self.cos_thetas[token_positions]
+        sin_thetas = self.sin_thetas[token_positions]
+        x_even = x[..., 0::2]
+        x_odd = x[..., 1::2]
+        result = torch.empty_like(x)
+        result[..., 0::2] = x_even * cos_thetas - x_odd * sin_thetas
+        result[..., 1::2] = x_even * sin_thetas + x_odd * cos_thetas
+        return result
 
 
 if __name__ == "__main__":
