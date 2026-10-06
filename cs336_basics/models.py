@@ -78,5 +78,11 @@ class RoPE(nn.Module):
         return result
 
 
+def softmax(x:torch.Tensor, dim=-1):
+    x_max = torch.max(x, dim=dim, keepdim=True).values
+    x_exp = torch.exp(x - x_max)
+    return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
+
+
 if __name__ == "__main__":
     rope = RoPE(10000.0, 100, 200)
