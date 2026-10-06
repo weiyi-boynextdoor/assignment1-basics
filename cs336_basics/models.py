@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from einops import einsum
 import math
+from jaxtyping import Bool, Float, Int
+from torch import Tensor
 
 class Linear(nn.Module):
     def __init__(self, in_features:int, out_features:int, device=None, dtype=None):
@@ -10,7 +12,7 @@ class Linear(nn.Module):
         sigma = math.sqrt(2 / (in_features + out_features))
         torch.nn.init.trunc_normal_(self.weights, mean=0, std=sigma, a=-3*sigma, b=3*sigma)
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:Tensor):
         return x @ self.weights.T
 
 
@@ -20,7 +22,7 @@ class Embedding(nn.Module):
         self.weights = nn.Parameter(torch.ones(num_embeddings, embedding_dim, device=device, dtype=dtype))
         torch.nn.init.trunc_normal_(self.weights, mean=0, std=1, a=-3, b=3)
 
-    def forward(self, token_ids:torch.Tensor):
+    def forward(self, token_ids:Tensor):
         return self.weights[token_ids]
 
 class RMSNorm(nn.Module):
@@ -29,7 +31,7 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weights = nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:Tensor):
         # upcast input to torch.float32
         in_type = x.dtype
         x = x.to(torch.float32)
@@ -49,7 +51,7 @@ class SwiGLU(nn.Module):
         self.w2 = nn.Parameter(torch.randn(d_model, d_ff, device=device, dtype=dtype))
         self.w3 = nn.Parameter(torch.randn(d_ff, d_model, device=device, dtype=dtype))
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:Tensor):
         w1_x = x @ self.w1.T
         silu = w1_x * torch.sigmoid(w1_x)
         w3_x = x @ self.w3.T
@@ -67,7 +69,7 @@ class RoPE(nn.Module):
         self.register_buffer("cos_thetas", thetas.cos(), persistent=False)
         self.register_buffer("sin_thetas", thetas.sin(), persistent=False)
 
-    def forward(self, x:torch.Tensor, token_positions:torch.Tensor):
+    def forward(self, x:Tensor, token_positions:Tensor):
         cos_thetas = self.cos_thetas[token_positions]
         sin_thetas = self.sin_thetas[token_positions]
         x_even = x[..., 0::2]
@@ -78,10 +80,24 @@ class RoPE(nn.Module):
         return result
 
 
-def softmax(x:torch.Tensor, dim=-1):
+def softmax(x:Tensor, dim=-1):
     x_max = torch.max(x, dim=dim, keepdim=True).values
     x_exp = torch.exp(x - x_max)
     return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
+
+
+def scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys d_k"],
+    V: Float[Tensor, " ... keys d_v"],
+    mask: Bool[Tensor, " ... queries keys"] | None = None
+) -> Float[Tensor, " ... queries d_v"]:
+    qkt = einsum(Q, K, "... n k, ... m k -> ... n m")
+    qkt /= math.sqrt(float(Q.shape[-1]))
+    if mask is not None:
+        qkt = qkt.masked_fill(~mask, float("-inf"))
+    scores = softmax(qkt) @ V
+    return scores
 
 
 if __name__ == "__main__":
