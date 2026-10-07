@@ -8,35 +8,35 @@ from torch import Tensor
 class Linear(nn.Module):
     def __init__(self, in_features:int, out_features:int, device=None, dtype=None):
         super().__init__()
-        self.weights = nn.Parameter(torch.ones(out_features, in_features, device=device, dtype=dtype))
+        self.weight = nn.Parameter(torch.ones(out_features, in_features, device=device, dtype=dtype))
         sigma = math.sqrt(2 / (in_features + out_features))
-        torch.nn.init.trunc_normal_(self.weights, mean=0, std=sigma, a=-3*sigma, b=3*sigma)
+        torch.nn.init.trunc_normal_(self.weight, mean=0, std=sigma, a=-3*sigma, b=3*sigma)
 
     def forward(self, x:Tensor):
-        return x @ self.weights.T
+        return x @ self.weight.T
 
 
 class Embedding(nn.Module):
     def __init__(self, num_embeddings:int, embedding_dim:int, device=None, dtype=None):
         super().__init__()
-        self.weights = nn.Parameter(torch.ones(num_embeddings, embedding_dim, device=device, dtype=dtype))
-        torch.nn.init.trunc_normal_(self.weights, mean=0, std=1, a=-3, b=3)
+        self.weight = nn.Parameter(torch.ones(num_embeddings, embedding_dim, device=device, dtype=dtype))
+        torch.nn.init.trunc_normal_(self.weight, mean=0, std=1, a=-3, b=3)
 
     def forward(self, token_ids:Tensor):
-        return self.weights[token_ids]
+        return self.weight[token_ids]
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model:int, eps:float=1e-5, device=None, dtype=None):
         super().__init__()
         self.eps = eps
-        self.weights = nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
+        self.weight = nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
 
     def forward(self, x:Tensor):
         # upcast input to torch.float32
         in_type = x.dtype
         x = x.to(torch.float32)
         rms = torch.sqrt((einsum(x, x, "... x, ... x -> ...")) / x.shape[-1] + self.eps)
-        result = x / rms.unsqueeze(-1) * self.weights
+        result = x / rms.unsqueeze(-1) * self.weight
         return result.to(in_type)
 
 
@@ -107,10 +107,10 @@ class MultiHeadSelfAttention(nn.Module):
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_head = d_model // num_heads # let dk = dv = d_model / num_heads
-        self.weight_q = nn.Parameter(torch.randn(d_model, d_model))
-        self.weight_k = nn.Parameter(torch.randn(d_model, d_model))
-        self.weight_v = nn.Parameter(torch.randn(d_model, d_model))
-        self.weight_o = nn.Parameter(torch.randn(d_model, d_model))
+        self.q_proj = nn.Parameter(torch.randn(d_model, d_model))
+        self.k_proj = nn.Parameter(torch.randn(d_model, d_model))
+        self.v_proj = nn.Parameter(torch.randn(d_model, d_model))
+        self.o_proj = nn.Parameter(torch.randn(d_model, d_model))
         # rope
         if rope_theta > 0 and max_seq_len > 0:
             self.rope = RoPE(rope_theta, self.d_head, max_seq_len)
@@ -119,9 +119,9 @@ class MultiHeadSelfAttention(nn.Module):
 
     def forward(self, x:torch.Tensor, token_positions:torch.Tensor=None):
         sequence_length = x.shape[-2]
-        Q = x @ self.weight_q.T
-        K = x @ self.weight_k.T
-        V = x @ self.weight_v.T
+        Q = x @ self.q_proj.T
+        K = x @ self.k_proj.T
+        V = x @ self.v_proj.T
         Q = rearrange(Q, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         K = rearrange(K, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         V = rearrange(V, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
@@ -135,7 +135,21 @@ class MultiHeadSelfAttention(nn.Module):
         mask = torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.bool, device=x.device))
         attention = scaled_dot_product_attention(Q, K, V, mask)
         attention = rearrange(attention, "... num_heads seq d_head -> ... seq (num_heads d_head)", num_heads=self.num_heads)
-        return attention @ self.weight_o.T
+        return attention @ self.o_proj.T
+
+
+class PreNormTransformerBlock(nn.Module):
+    def __init__(self, d_model:int, num_heads:int, d_ff:int, theta:int, max_seq_len:int):
+        super().__init__()
+        self.ln1 = RMSNorm(d_model)
+        self.attn = MultiHeadSelfAttention(d_model, num_heads, theta, max_seq_len)
+        self.ffn = SwiGLU(d_model, d_ff)
+        self.ln2 = RMSNorm(d_model)
+
+    def forward(self, x:torch.Tensor):
+        layer1 = self.attn(self.ln1(x)) + x
+        layer2 = self.ffn(self.ln2(layer1)) + layer1
+        return layer2
 
 
 if __name__ == "__main__":

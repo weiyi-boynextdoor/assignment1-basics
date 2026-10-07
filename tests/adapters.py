@@ -31,7 +31,7 @@ def run_linear(
     from cs336_basics.models import Linear
     linear = Linear(d_in, d_out, dtype=torch.float)
     linear.load_state_dict({
-        "weights": weights
+        "weight": weights
     })
     return linear(in_features)
 
@@ -57,7 +57,7 @@ def run_embedding(
     from cs336_basics.models import Embedding
     embedding = Embedding(vocab_size, d_model, dtype=torch.float)
     embedding.load_state_dict({
-        "weights": weights
+        "weight": weights
     })
     return embedding(token_ids)
 
@@ -157,10 +157,10 @@ def run_multihead_self_attention(
     from cs336_basics.models import MultiHeadSelfAttention
     module = MultiHeadSelfAttention(d_model, num_heads)
     module.load_state_dict({
-        "weight_q": q_proj_weight,
-        "weight_k": k_proj_weight,
-        "weight_v": v_proj_weight,
-        "weight_o": o_proj_weight
+        "q_proj": q_proj_weight,
+        "k_proj": k_proj_weight,
+        "v_proj": v_proj_weight,
+        "o_proj": o_proj_weight
     })
     return module(in_features)
 
@@ -205,10 +205,10 @@ def run_multihead_self_attention_with_rope(
     from cs336_basics.models import MultiHeadSelfAttention
     module = MultiHeadSelfAttention(d_model, num_heads, rope_theta=theta, max_seq_len=max_seq_len)
     module.load_state_dict({
-        "weight_q": q_proj_weight,
-        "weight_k": k_proj_weight,
-        "weight_v": v_proj_weight,
-        "weight_o": o_proj_weight
+        "q_proj": q_proj_weight,
+        "k_proj": k_proj_weight,
+        "v_proj": v_proj_weight,
+        "o_proj": o_proj_weight
     })
     return module(in_features, token_positions)
 
@@ -307,7 +307,20 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    from cs336_basics.models import PreNormTransformerBlock
+    module = PreNormTransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
+    module.load_state_dict({
+        "attn.q_proj": weights["attn.q_proj.weight"],
+        "attn.k_proj": weights["attn.k_proj.weight"],
+        "attn.v_proj": weights["attn.v_proj.weight"],
+        "attn.o_proj": weights["attn.output_proj.weight"],
+        "ln1.weight": weights["ln1.weight"],
+        "ffn.w1": weights["ffn.w1.weight"],
+        "ffn.w2": weights["ffn.w2.weight"],
+        "ffn.w3": weights["ffn.w3.weight"],
+        "ln2.weight": weights["ln2.weight"],
+    })
+    return module(in_features)
 
 
 def run_transformer_lm(
@@ -415,7 +428,7 @@ def run_rmsnorm(
     from cs336_basics.models import RMSNorm
     rmsnorm = RMSNorm(d_model, eps=eps)
     rmsnorm.load_state_dict({
-        "weights": weights
+        "weight": weights
     })
     return rmsnorm(in_features)
 
