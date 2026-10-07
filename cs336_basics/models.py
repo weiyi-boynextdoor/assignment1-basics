@@ -107,10 +107,10 @@ class MultiHeadSelfAttention(nn.Module):
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_head = d_model // num_heads # let dk = dv = d_model / num_heads
-        self.q_proj = nn.Parameter(torch.randn(d_model, d_model))
-        self.k_proj = nn.Parameter(torch.randn(d_model, d_model))
-        self.v_proj = nn.Parameter(torch.randn(d_model, d_model))
-        self.o_proj = nn.Parameter(torch.randn(d_model, d_model))
+        self.q_proj = Linear(d_model, d_model)
+        self.k_proj = Linear(d_model, d_model)
+        self.v_proj = Linear(d_model, d_model)
+        self.output_proj = Linear(d_model, d_model)
         # rope
         if rope_theta > 0 and max_seq_len > 0:
             self.rope = RoPE(rope_theta, self.d_head, max_seq_len)
@@ -119,9 +119,9 @@ class MultiHeadSelfAttention(nn.Module):
 
     def forward(self, x:torch.Tensor, token_positions:torch.Tensor=None):
         sequence_length = x.shape[-2]
-        Q = x @ self.q_proj.T
-        K = x @ self.k_proj.T
-        V = x @ self.v_proj.T
+        Q = self.q_proj(x)
+        K = self.k_proj(x)
+        V = self.v_proj(x)
         Q = rearrange(Q, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         K = rearrange(K, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         V = rearrange(V, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
@@ -135,7 +135,7 @@ class MultiHeadSelfAttention(nn.Module):
         mask = torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.bool, device=x.device))
         attention = scaled_dot_product_attention(Q, K, V, mask)
         attention = rearrange(attention, "... num_heads seq d_head -> ... seq (num_heads d_head)", num_heads=self.num_heads)
-        return attention @ self.o_proj.T
+        return self.output_proj(attention)
 
 
 class PreNormTransformerBlock(nn.Module):
@@ -151,6 +151,24 @@ class PreNormTransformerBlock(nn.Module):
         layer2 = self.ffn(self.ln2(layer1)) + layer1
         return layer2
 
+
+class TransformerLM(nn.Module):
+    def __init__(self, vocab_size:int, context_length:int, d_model:int, num_layers:int, num_heads:int, d_ff:int, rope_theta:float):
+        super().__init__()
+        self.token_embeddings = Embedding(vocab_size, d_model)
+        layers = []
+        for i in range(num_layers):
+            layers.append(PreNormTransformerBlock(d_model, num_heads, d_ff, rope_theta, context_length))
+        self.layers = nn.ModuleList(layers)
+        self.ln_final = RMSNorm(d_model)
+        self.lm_head = Linear(vocab_size, d_model)
+
+    def forward(self, in_indices:torch.Tensor):
+        result = self.token_embeddings(in_indices)
+        for layer in self.layers:
+            result = layer(result)
+        result = self.ln_final(result)
+        return self.lm_head(result)
 
 if __name__ == "__main__":
     rope = RoPE(10000.0, 100, 200)
