@@ -101,7 +101,7 @@ def scaled_dot_product_attention(
 
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, d_model:int, num_heads:int):
+    def __init__(self, d_model:int, num_heads:int, rope_theta=0, max_seq_len=0):
         super().__init__()
         assert d_model % num_heads == 0
         self.d_model = d_model
@@ -111,8 +111,13 @@ class MultiHeadSelfAttention(nn.Module):
         self.weight_k = nn.Parameter(torch.randn(d_model, d_model))
         self.weight_v = nn.Parameter(torch.randn(d_model, d_model))
         self.weight_o = nn.Parameter(torch.randn(d_model, d_model))
+        # rope
+        if rope_theta > 0 and max_seq_len > 0:
+            self.rope = RoPE(rope_theta, self.d_head, max_seq_len)
+        else:
+            self.rope = None
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:torch.Tensor, token_positions:torch.Tensor=None):
         sequence_length = x.shape[-2]
         Q = x @ self.weight_q.T
         K = x @ self.weight_k.T
@@ -120,7 +125,14 @@ class MultiHeadSelfAttention(nn.Module):
         Q = rearrange(Q, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         K = rearrange(K, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
         V = rearrange(V, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
-        mask = torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.bool))
+
+        if self.rope is not None:
+            if token_positions is None:
+                token_positions = torch.arange(sequence_length, device=x.device)
+            Q = self.rope(Q, token_positions.unsqueeze(-2))
+            K = self.rope(K, token_positions.unsqueeze(-2))
+
+        mask = torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.bool, device=x.device))
         attention = scaled_dot_product_attention(Q, K, V, mask)
         attention = rearrange(attention, "... num_heads seq d_head -> ... seq (num_heads d_head)", num_heads=self.num_heads)
         return attention @ self.weight_o.T
