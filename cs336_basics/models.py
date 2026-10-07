@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from einops import einsum
+from einops import einsum, rearrange
 import math
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
@@ -61,7 +61,7 @@ class SwiGLU(nn.Module):
 class RoPE(nn.Module):
     def __init__(self, theta:float, d_k:int, max_seq_len:int, device=None):
         super().__init__()
-        half_d_k = d_k / 2
+        half_d_k = d_k // 2
         exponent = torch.arange(half_d_k, dtype=torch.float)
         exponent /= half_d_k
         inv_freq = torch.pow(1.0 / theta, exponent)
@@ -98,6 +98,32 @@ def scaled_dot_product_attention(
         qkt = qkt.masked_fill(~mask, float("-inf"))
     scores = softmax(qkt) @ V
     return scores
+
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, d_model:int, num_heads:int):
+        super().__init__()
+        assert d_model % num_heads == 0
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_head = d_model // num_heads # let dk = dv = d_model / num_heads
+        self.weight_q = nn.Parameter(torch.randn(d_model, d_model))
+        self.weight_k = nn.Parameter(torch.randn(d_model, d_model))
+        self.weight_v = nn.Parameter(torch.randn(d_model, d_model))
+        self.weight_o = nn.Parameter(torch.randn(d_model, d_model))
+
+    def forward(self, x:torch.Tensor):
+        sequence_length = x.shape[-2]
+        Q = x @ self.weight_q.T
+        K = x @ self.weight_k.T
+        V = x @ self.weight_v.T
+        Q = rearrange(Q, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
+        K = rearrange(K, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
+        V = rearrange(V, "... seq (num_heads d_head) -> ... num_heads seq d_head", num_heads=self.num_heads)
+        mask = torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.bool))
+        attention = scaled_dot_product_attention(Q, K, V, mask)
+        attention = rearrange(attention, "... num_heads seq d_head -> ... seq (num_heads d_head)", num_heads=self.num_heads)
+        return attention @ self.weight_o.T
 
 
 if __name__ == "__main__":
