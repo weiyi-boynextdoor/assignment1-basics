@@ -161,7 +161,7 @@ class TransformerLM(nn.Module):
             layers.append(PreNormTransformerBlock(d_model, num_heads, d_ff, rope_theta, context_length))
         self.layers = nn.ModuleList(layers)
         self.ln_final = RMSNorm(d_model)
-        self.lm_head = Linear(vocab_size, d_model)
+        self.lm_head = Linear(d_model, vocab_size)
 
     def forward(self, in_indices:torch.Tensor):
         result = self.token_embeddings(in_indices)
