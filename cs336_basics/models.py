@@ -47,15 +47,15 @@ class SwiGLU(nn.Module):
         if d_ff <= 0:
             d_ff = d_model * 8 / 3
         self.d_ff = d_ff
-        self.w1 = nn.Parameter(torch.randn(d_ff, d_model, device=device, dtype=dtype))
-        self.w2 = nn.Parameter(torch.randn(d_model, d_ff, device=device, dtype=dtype))
-        self.w3 = nn.Parameter(torch.randn(d_ff, d_model, device=device, dtype=dtype))
+        self.w1 = Linear(d_model, d_ff, device=device, dtype=dtype)
+        self.w2 = Linear(d_ff, d_model, device=device, dtype=dtype)
+        self.w3 = Linear(d_model, d_ff, device=device, dtype=dtype)
 
     def forward(self, x:Tensor):
-        w1_x = x @ self.w1.T
+        w1_x = self.w1(x)
         silu = w1_x * torch.sigmoid(w1_x)
-        w3_x = x @ self.w3.T
-        return (silu * w3_x) @ self.w2.T
+        w3_x = self.w3(x)
+        return self.w2(silu * w3_x)
 
 
 class RoPE(nn.Module):
@@ -169,6 +169,7 @@ class TransformerLM(nn.Module):
             result = layer(result)
         result = self.ln_final(result)
         return self.lm_head(result)
+
 
 if __name__ == "__main__":
     rope = RoPE(10000.0, 100, 200)

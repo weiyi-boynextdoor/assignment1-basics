@@ -94,9 +94,9 @@ def run_swiglu(
     from cs336_basics.models import SwiGLU
     swiglu = SwiGLU(d_model, d_ff)
     swiglu.load_state_dict({
-        "w1": w1_weight,
-        "w2": w2_weight,
-        "w3": w3_weight
+        "w1.weight": w1_weight,
+        "w2.weight": w2_weight,
+        "w3.weight": w3_weight
     })
     return swiglu(in_features)
 
@@ -309,17 +309,7 @@ def run_transformer_block(
     """
     from cs336_basics.models import PreNormTransformerBlock
     module = PreNormTransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
-    module.load_state_dict({
-        "attn.q_proj.weight": weights["attn.q_proj.weight"],
-        "attn.k_proj.weight": weights["attn.k_proj.weight"],
-        "attn.v_proj.weight": weights["attn.v_proj.weight"],
-        "attn.output_proj.weight": weights["attn.output_proj.weight"],
-        "ln1.weight": weights["ln1.weight"],
-        "ffn.w1": weights["ffn.w1.weight"],
-        "ffn.w2": weights["ffn.w2.weight"],
-        "ffn.w3": weights["ffn.w3.weight"],
-        "ln2.weight": weights["ln2.weight"],
-    })
+    module.load_state_dict(weights)
     return module(in_features)
 
 
@@ -402,7 +392,10 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    from cs336_basics.models import TransformerLM
+    module = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta)
+    module.load_state_dict(weights)
+    return module.forward(in_indices)
 
 
 def run_rmsnorm(
