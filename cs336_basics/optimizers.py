@@ -32,19 +32,51 @@ class SGD(Optimizer):
 
 class AdamW(Optimizer):
     def __init__(self, params,
-        lr: float | Tensor = 1e-3,
-        betas: tuple[float | Tensor, float | Tensor] = (0.9, 0.999),
-        eps: float = 1e-8
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 1e-2,
     ):
         defaults = {
             "lr": lr,
             "betas": betas,
-            "eps": eps
+            "eps": eps,
+            "weight_decay": weight_decay
         }
         super().__init__(params, defaults=defaults)
 
     def step(self, closure: Optional[Callable] = None):
-        pass
+        loss = None if closure is None else closure()
+        for i, group in enumerate(self.param_groups):
+            beta1, beta2 = group["betas"]
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+            eps = group["eps"]
+            
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                if not state or "m" not in state:
+                    # first moment vector
+                    state["m"] = torch.zeros_like(p)
+                    # second moment vector
+                    state["v"] = torch.zeros_like(p)
+                    state["t"] = 0
+
+                state["t"] += 1
+                t = state["t"]
+                grad = p.grad.data
+
+                adjusted_lr = lr * math.sqrt(1 - beta2**t) / (1 - beta1**t)
+                p.data -= lr * weight_decay * p.data
+
+                state["m"] = beta1 * state["m"] + (1 - beta1) * grad
+                state["v"] = beta2 * state["v"] + (1 - beta2) * (grad.square())
+                p.data -= adjusted_lr * state["m"] / (state["v"].sqrt() + eps)
+
+        return loss
 
 
 if __name__ == "__main__":
