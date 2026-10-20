@@ -41,6 +41,18 @@ class SGD(Optimizer):
         return loss
 
 
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps=1e-6):
+    grads = [parameter.grad for parameter in parameters if parameter.grad is not None]
+    if not grads:
+        return
+
+    total_norm = torch.stack([grad.norm() for grad in grads]).norm()
+    scale = (max_l2_norm / (total_norm + eps)).clamp(max=1.0)
+    with torch.no_grad():
+        for grad in grads:
+            grad.mul_(scale)
+
+
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn(10, 10))
     opt = SGD([weights], lr=1)
