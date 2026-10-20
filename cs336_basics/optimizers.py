@@ -79,6 +79,21 @@ class AdamW(Optimizer):
         return loss
 
 
+def learning_rate_schedule(
+    it: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    cosine_cycle_iters: int
+) -> float:
+    if it < warmup_iters:
+        return it / warmup_iters * max_learning_rate
+    if it > cosine_cycle_iters:
+        return min_learning_rate
+    ret = min_learning_rate + 0.5 * (1 + math.cos((it - warmup_iters) / (cosine_cycle_iters - warmup_iters) * math.pi)) * (max_learning_rate - min_learning_rate)
+    return ret
+
+
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn(10, 10))
     opt = SGD([weights], lr=1)
